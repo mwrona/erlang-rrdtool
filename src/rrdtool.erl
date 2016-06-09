@@ -35,7 +35,8 @@
 		stop/1,
 		create/5,
 		update/3,
-		update/4
+		update/4,
+		xport/4
 ]).
 
 % gen_server callbacks
@@ -76,6 +77,9 @@ update(Pid, Filename, DatastoreValues) ->
 update(Pid, Filename, DatastoreValues, Time) ->
 	gen_server:call(Pid, {update, Filename, format_datastore_values(DatastoreValues), Time}, infinity).
 
+xport(Pid, Def, Xport, Options) ->
+	gen_server:call(Pid, {xport, Def, Xport, Options}).
+
 % gen_server callbacks
 
 %% @hidden
@@ -110,6 +114,17 @@ handle_call({update, Filename, {Datastores, Values}, Time}, _From, Port) ->
 		{Port, {data, {eol, "OK"++_}}} ->
 			{reply, ok, Port};
 		{Port, {data, {eol, "ERROR:"++Message}}} ->
+			{reply, {error, Message}, Port}
+	end;
+handle_call({xport, Def, Xport, Options}, _From, Port) ->
+	Command = ["xport ", Options, " ", Def, " ", Xport, "\n"],
+	%io:format("Command: ~p~n", [lists:flatten(Command)]),
+	port_command(Port, Command),
+	case receive_answer(Port) of
+		{ok, Data} ->
+			ParsedData = lists:foldl(fun(El, Acc) -> El ++ "\n" ++ Acc end, "", Data),
+			{reply, {ok, ParsedData}, Port};
+		{error, Message} ->
 			{reply, {error, Message}, Port}
 	end;
 handle_call(stop, _From, State) ->
@@ -232,3 +247,18 @@ format_create_options(Options) ->
 	end,
 
 	lists:flatten([StepOpt, StartOpt]).
+
+receive_answer(Port) ->
+	receive_answer(Port, []).
+
+receive_answer(Port, Acc) ->
+	receive
+		{Port, {data, {eol, "OK" ++ _}}} ->
+			{ok, Acc};
+		{Port, {data, {eol, "ERROR:" ++ Error}}} ->
+			{error, Error};
+		{Port, {data, {eol, Data}}} ->
+			receive_answer(Port, [Data | Acc]);
+		Other ->
+			{error, Other}
+	end.
